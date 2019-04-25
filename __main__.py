@@ -7,6 +7,9 @@ import scipy.sparse
 import GPGroups
 import GPPredict
 import numpy
+import sklearn.decomposition as dec
+import random
+from sklearn.neural_network import MLPRegressor
 
 #app_id	app_url	app_name	app_category_primary	app_category_secondary	app_score	app_rating_5
 #app_rating_4	app_rating_3	app_rating_2	app_rating_1	app_no_reviews	app_description	app_is_editors_choice
@@ -84,17 +87,23 @@ def catagoriesToNumbers(lib, catagories):
             lib[cat] = len(lib.keys())
     return lib
 
-def mlmodel(X):
+def mlmodel(X, a, maxIter):
     #logr = lm.LinearRegression()
     #logr.fit(X=X['trainData'], y=X['trainTargets'])
     #bayR = lm.BayesianRidge()
     #bayR.fit(X['trainData'], X['trainTargets'])
-
-
-    adaBoost = ens.AdaBoostRegressor()
-    adaBoost.fit(X['trainData'], X['trainTargets'])
-    tstpred = adaBoost.predict(X['testData'])
-    return {'accuracy':CMB.contTest(tstpred, X['testTargets']), 'model':adaBoost}
+    #adaBoost = ens.AdaBoostRegressor()
+    #adaBoost.fit(X['trainData'], X['trainTargets'])
+    NN = MLPRegressor(verbose=True, learning_rate='adaptive', hidden_layer_sizes=(30, 3, 10), max_iter = maxIter,\
+		 alpha = a, early_stopping = True, n_iter_no_change=15, \
+		activation = 'tanh')
+    try:
+        print('n-layers:' + str(NN.n_layers))
+    except:
+        pass
+    NN.fit(X['trainData'], X['trainTargets'])
+    tstpred = NN.predict(X['testData'])
+    return {'out':CMB.contTest(tstpred, X['testTargets']), 'model':NN}
 
 def catagoryExpand(OM_input):
     # format input categories into seperate arrays to break dependacies on catagories
@@ -116,8 +125,12 @@ def catagoryExpand(OM_input):
 if __name__ == '__main__':
     myFile = open('dat/Google_Apps_48K.tsv')
     globalAttributes, globalDat = usableFormat(myFile)
+    random.shuffle(globalDat)
+    #REMOVE ME - too much data for my local computer, run into MemoryError
+    globalDat = globalDat[:11000]
     attrLib = asLib(globalAttributes)
-    #-------------------------------------------------------------------------------------------------------------------
+    CMB.why('FIRST PRICE: ' + str(globalDat[0][attrLib['app_score']]))
+    #------------------------------------------------------------------------------------------------------------------
     #                                       HEY PEOPLE - Data Prediction Selecting Stage
     #-------------------------------------------------------------------------------------------------------------------
     #Pre Processing stage. If you are looking to utilize this research, I would suggest starting here. You can predict many different measures
@@ -132,30 +145,88 @@ if __name__ == '__main__':
     # "The average in-app purchase per user is $1.08 for iOS users and $0.43 for Android users, according to an AppsFlyer study." - https://www.braze.com/blog/in-app-purchase-stats/
     # I made the 6 - appscore so it wouldn't be a complete disqualifier
     OM_Func = lambda line, lib: line[lib['app_installs']] * (6.0 - line[lib['app_score']]) * (line[lib['app_price']] + 0.43)
+    Like_Func = lambda line, lib: line[lib['app_score']]
     # -------------------------------------------------------------------------------------------------------------------
     #                                       END OF Data Predicting Selection Stage
     # -------------------------------------------------------------------------------------------------------------------
     #Get rid of un-wanted columns and calculate the scores
-    OM_Input, OM_Targets = formatForMeasure(globalDat, globalAttributes, ['app_category_primary', 'app_category_secondary'], OM_Func)
+    OM_Input, OM_Targets = formatForMeasure(globalDat, globalAttributes, ['app_category_primary', 'app_category_secondary'],Like_Func)
     #expand catagories to be mutually independant.
     formatted = catagoryExpand(OM_Input)
-    #Add text features
+    #Get text features
     text = [line[attrLib['app_description']] for line in globalDat]
     toVec = txt.CountVectorizer()
     outVec = toVec.fit_transform(text)
+    #cut down on insane amount of text features
+    #decomp = dec.PCA(n_components=40000)
+    decomp = dec.TruncatedSVD(n_components=int(outVec.shape[1] / 1.01))
+    print('ee')
+    outVec = decomp.fit(outVec)
+    print('a')
+    outVec = scipy.sparse.csr_matrix(outVec)
+    print('yes')
+    #trunc = dec.TruncatedSVD(n_components=outVec.shape[1]/10)
+    #trunc.fit(outVec)
+    #outVec = trunc.transform(outVec)
     print('description vector shape: ' + str(outVec.shape) + " " + str(type(outVec)))
     #collect the target
-    shp = (len(formatted), len(formatted[0]) + 1 + outVec.shape[1])
-    withTarget = scipy.sparse.csc_matrix(shp, dtype=float)
-    withTarget[:][withTarget.shape[1] - 1] = OM_Targets
 
-    for a in range(withTarget.shape[0]):
-        withTarget[a][0] = OM_Targets[a]
-    withTarget[:, len(formatted[0]):-1] = outVec
-    withTarget[:,:-(1 + len(outVec[0]))] = formatted
+    shp = (len(formatted), len(formatted[0]) + 1 + outVec.shape[1])
+    withTarget = scipy.sparse.lil_matrix(shp, dtype=float)
+
+    print("WithTarget: " + str(withTarget.shape))
+    withTarget = withTarget.transpose()
+    print("WithTarget: " + str(withTarget.shape))
+
+    tmp = scipy.sparse.lil_matrix(OM_Targets.reshape((len(OM_Targets), 1))).transpose()
+    print("OM_Targets: " + str(OM_Targets.shape))
+    withTarget[-1] = tmp
+
+    tmp = scipy.sparse.lil_matrix(formatted).transpose()
+    print("formatted: " + str(tmp.shape))
+    formattedLen = tmp.shape[0]
+    withTarget[:formattedLen] = tmp
+
+    tmp = scipy.sparse.lil_matrix(outVec.transpose())
+    print("outVec: " + str(tmp.shape) + ", type: " + str(type(tmp)))
+    stop = withTarget.shape[0] - 1
+    tmpStop = tmp.shape[0]
+    #withTarget[formattedLen:-1] = tmp too big of an opperation, memory error
+    try:
+        CMB.sparseWork(withTarget, tmp, CMB.THROTTLE, formattedLen, stop, 0, tmpStop)
+        #while formattedLen + num < stop:
+        #    if num % 10000 == 0: print(num)
+        #    withTarget[num + formattedLen] = tmp[num]
+        #   num+=1
+        #
+    except:
+        print('sparseWork failure')
+        pass
+
+
+    withTarget = scipy.sparse.csr_matrix(withTarget.transpose())
+    print("WithTarget: " + str(withTarget.shape))
+    #withTarget[:, withTarget.shape[1] - 1] = OM_Targets
+    #ithTarget[:, len(formatted[0])-1] = outVec
+    #ithTarget[:,:-(1 + len(outVec[0]))] = formatted
 
     #test the accuracy
-    numpy.random.shuffle(withTarget)
-    accuracy = CMB.fold(withTarget, 10, mlmodel)
-    print('accuracy of formattedData: ' + accuracy)
-    pass
+    a = .0001
+    maxIter = 1
+    final = ''
+    X = CMB.easyFormat(withTarget,0, 1001)
+    while maxIter < 40:
+        maxIter = 150
+        while a < .1:
+            out = mlmodel(X, a, maxIter)['out']
+            final += 'a: '
+            final += str(a)
+            final += 'maxIt:'
+            final += str(maxIter)
+            final += ' - '
+            final += str(out)
+            final += '\n'
+            a=a*2
+        a = .0001
+        maxIter = maxIter * 2
+    print('final: ' + final)
