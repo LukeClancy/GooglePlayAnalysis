@@ -9,6 +9,7 @@ import GPPredict
 import numpy
 import sklearn.decomposition as dec
 import random
+import nltk
 from sklearn.neural_network import MLPRegressor
 
 #app_id	app_url	app_name	app_category_primary	app_category_secondary	app_score	app_rating_5
@@ -94,9 +95,8 @@ def mlmodel(X, a, maxIter):
     #bayR.fit(X['trainData'], X['trainTargets'])
     #adaBoost = ens.AdaBoostRegressor()
     #adaBoost.fit(X['trainData'], X['trainTargets'])
-    NN = MLPRegressor(verbose=True, learning_rate='adaptive', hidden_layer_sizes=(30, 3, 10), max_iter = maxIter,\
-		 alpha = a, early_stopping = True, n_iter_no_change=15, \
-		activation = 'tanh')
+    NN = MLPRegressor(verbose=True, learning_rate='adaptive', hidden_layer_sizes=(200, 300, 200, 100), max_iter = maxIter,\
+		 alpha = a, early_stopping = True, n_iter_no_change=15, activation = 'identity')
     try:
         print('n-layers:' + str(NN.n_layers))
     except:
@@ -129,6 +129,26 @@ if __name__ == '__main__':
     #REMOVE ME - too much data for my local computer, run into MemoryError
     globalDat = globalDat[:11000]
     attrLib = asLib(globalAttributes)
+    #take out other languages
+    from langdetect import detect
+    delet = 0
+    exceptts = 0
+    num = 0
+    while num < len(globalDat):
+        try:
+            lang = detect(globalDat[num][attrLib['app_description']])
+            if lang != 'en':
+                del globalDat[num]
+                delet += 1
+                if delet %100 == 0:
+                    print(str(delet) + ' non english apps deleted')
+                num -= 1
+        except:
+            print("execpts: " + str(++exceptts))
+            del globalDat[num]
+            num -= 1
+        num += 1
+    print('final: ' + str(delet))
     CMB.why('FIRST PRICE: ' + str(globalDat[0][attrLib['app_score']]))
     #------------------------------------------------------------------------------------------------------------------
     #                                       HEY PEOPLE - Data Prediction Selecting Stage
@@ -150,27 +170,69 @@ if __name__ == '__main__':
     #                                       END OF Data Predicting Selection Stage
     # -------------------------------------------------------------------------------------------------------------------
     #Get rid of un-wanted columns and calculate the scores
-    OM_Input, OM_Targets = formatForMeasure(globalDat, globalAttributes, ['app_category_primary', 'app_category_secondary'],Like_Func)
+    OM_Input, OM_Targets = formatForMeasure(globalDat, globalAttributes, ['app_category_primary', 'app_category_secondary'], OM_Func)
     #expand catagories to be mutually independant.
     formatted = catagoryExpand(OM_Input)
     #Get text features
     text = [line[attrLib['app_description']] for line in globalDat]
-    toVec = txt.CountVectorizer()
-    outVec = toVec.fit_transform(text)
+    import rake_nltk
+     #raking parses through and gets the words that seem the most important in the sentence.
+    raker = rake_nltk.Rake(max_length=2)
+    for num in range(len(text)):
+        raker.extract_keywords_from_text(text[num])
+        text[num] = raker.get_ranked_phrases_with_scores()
+    #text = [raker.extract_keywords_from_text(desc).get_ranked_phrases_with_scores() for desc in text] #(rank, word)
+    from nltk.stem import SnowballStemmer
+    snowy = SnowballStemmer("english") #stem is like training -> train. It helps simplify
+    text = [[(tuppy[0], snowy.stem(tuppy[1].lower())) for tuppy in desc] for desc in text] #stem all the words
+    wordBucket = {}
+    #store the 'worth' of the features, which I am determining as a function
+    #of relevance and frequency.
+    for desc in text:
+        for tuppy in desc:
+            if wordBucket.get(tuppy[1]) == None:
+                wordBucket[tuppy[1]] = tuppy[0]
+            wordBucket[tuppy[1]] += tuppy[0] #put all the words into a set.
+    print('len of wordBuc: ' + str(len(wordBucket.keys())))
+    cutoff = .1
+    maxFeats = 5000
+    #preliminary dimensionality cutting through deleting irrelevant features
+    WBKeys = list(wordBucket.keys())
+    while len(wordBucket) > maxFeats:
+        for key in WBKeys:
+            if cutoff > wordBucket[key]:
+                wordBucket.pop(key)
+        cutoff += .2
+        WBKeys = list(wordBucket.keys())
+        print('WB len: ' + str(len(wordBucket)))
+    plc = 0
+    for key in wordBucket.keys():
+        wordBucket[key] = plc
+        plc+=1
+    print('the place is: ' + str(plc))
+
+    outVec = scipy.sparse.lil_matrix((len(globalDat), len(wordBucket.keys())))
+    print(str(outVec.shape))
+    for descN in range(len(text)):
+        for importance, word in text[descN]:
+            if wordBucket.get(word) != None:
+            	outVec[descN, wordBucket[word]] = importance
+    #wordVecer = txt.CountVectorizer()
+    #outVec = wordVecer.fit_transform(text)
     #cut down on insane amount of text features
     #decomp = dec.PCA(n_components=40000)
-    decomp = dec.TruncatedSVD(n_components=int(outVec.shape[1] / 1.01))
-    print('ee')
-    outVec = decomp.fit(outVec)
-    print('a')
-    outVec = scipy.sparse.csr_matrix(outVec)
-    print('yes')
+    print('starting truncation')
+    decomp = dec.TruncatedSVD(n_components=int(outVec.shape[1] / 2))
+    outVec = decomp.fit_transform(outVec)
+    outVec = scipy.sparse.csr_matrix(outVec, dtype=float)
     #trunc = dec.TruncatedSVD(n_components=outVec.shape[1]/10)
     #trunc.fit(outVec)
     #outVec = trunc.transform(outVec)
     print('description vector shape: ' + str(outVec.shape) + " " + str(type(outVec)))
     #collect the target
 
+
+    #put all information in usable format
     shp = (len(formatted), len(formatted[0]) + 1 + outVec.shape[1])
     withTarget = scipy.sparse.lil_matrix(shp, dtype=float)
 
@@ -203,9 +265,10 @@ if __name__ == '__main__':
         print('sparseWork failure')
         pass
 
-
+    #flip back
     withTarget = scipy.sparse.csr_matrix(withTarget.transpose())
     print("WithTarget: " + str(withTarget.shape))
+
     #withTarget[:, withTarget.shape[1] - 1] = OM_Targets
     #ithTarget[:, len(formatted[0])-1] = outVec
     #ithTarget[:,:-(1 + len(outVec[0]))] = formatted
@@ -215,18 +278,18 @@ if __name__ == '__main__':
     maxIter = 1
     final = ''
     X = CMB.easyFormat(withTarget,0, 1001)
-    while maxIter < 40:
-        maxIter = 150
-        while a < .1:
-            out = mlmodel(X, a, maxIter)['out']
-            final += 'a: '
-            final += str(a)
-            final += 'maxIt:'
-            final += str(maxIter)
-            final += ' - '
-            final += str(out)
-            final += '\n'
-            a=a*2
-        a = .0001
-        maxIter = maxIter * 2
+    #while maxIter < 40:
+    maxIter = 150
+    while a < .1:
+        out = mlmodel(X, a, maxIter)['out']
+        final += 'a: '
+        final += str(a)
+        final += 'maxIt:'
+        final += str(maxIter)
+        final += ' - '
+        final += str(out)
+        final += '\n'
+        a=a*2
+    #a = .0001
+    #maxIter = maxIter * 2
     print('final: ' + final)

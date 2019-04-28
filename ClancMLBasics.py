@@ -155,4 +155,3 @@ def fold(X, numFolds, fun):
   for a in lst:
     average += a/len(lst)
   return average
-
