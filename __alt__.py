@@ -92,8 +92,10 @@ def mlmodel(X, a, maxIter):
     #bayR.fit(X['trainData'], X['trainTargets'])
     #adaBoost = ens.AdaBoostRegressor()
     #adaBoost.fit(X['trainData'], X['trainTargets'])
-    NN = MLPRegressor(verbose=True, learning_rate='adaptive', hidden_layer_sizes=(200, 300, 200, 100), max_iter = maxIter,\
-		 alpha = a, early_stopping = True, n_iter_no_change=15, activation = 'identity')
+    import sklearn.svm as ssvm
+    NN = ssvm.SVR()
+    #NN = MLPRegressor(verbose=True, learning_rate='adaptive', hidden_layer_sizes=(200, 300, 200, 100), max_iter = maxIter,\
+    #	 alpha = a, early_stopping = True, n_iter_no_change=15, activation = 'identity')
     try:
         print('n-layers:' + str(NN.n_layers))
     except:

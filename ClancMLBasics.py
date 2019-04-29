@@ -82,28 +82,28 @@ def sparseWork(X, Y, step, Xstart, Xstop, Ystart, Ystop):
 def easyFormat(X, testStart, testLen):
   why("firstLine: " + str(X[0]))
   if spar.issparse(X):
-    print('-b')
+    #print('-b')
     dataPoints, dataDim = X.shape
     #seperate the data and targets
     Xtran = X.transpose()
     XData = Xtran[:-1]
     XVal = Xtran[-1]
-    print('-ba')
+    #print('-ba')
     XData = XData.transpose()
     why('\nAfter Sectioning: ' + str(XData[0]))
     XData.tolil()
     XVal = XVal.transpose().toarray()
-    print('-a')
+    #print('-a')
     #seperate data into trainData and testData.
     shp = (dataPoints - testLen, dataDim - 1)
     trainData = spar.lil_matrix(shp, dtype=float)
-    print('a')
+    #print('a')
     sparseWork(trainData, XData, THROTTLE, 0, testStart, 0, testStart)
     #trainData[:testStart] = XData[:testStart]
-    print('b')
+    #print('b')
     sparseWork(trainData, XData, THROTTLE, testStart, shp[0], testStart + testLen, dataPoints)
     #trainData[testStart:] = XData[(testStart + testLen):]
-    print('c')
+    #print('c')
     testData = spar.lil_matrix((testLen, dataDim - 1), dtype=float)
     sparseWork(testData, XData, THROTTLE, 0, testLen, testStart, testStart + testLen)
     #testData[:] = XData[testStart:(testStart + testLen)]
