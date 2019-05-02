@@ -271,7 +271,7 @@ if __name__ == '__main__':
     a = .0001
     maxIter = 1
     final = ''
-    X = CMB.easyFormat(withTarget,0, 1001)
+    X = CMB.easyFormat(withTarget, 0, 1001)
     #while maxIter < 40:
     maxIter = 150
     while a < .1:
